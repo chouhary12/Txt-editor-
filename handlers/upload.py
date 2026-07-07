@@ -3,7 +3,7 @@ import os
 from pyrogram import filters
 from pyrogram.types import Message
 
-from bot import app
+from app import app
 
 # User ki latest uploaded file
 USER_FILES = {}
