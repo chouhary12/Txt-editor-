@@ -3,7 +3,7 @@ from pyrogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton
 )
-from bot import app
+from app import app
 
 
 @app.on_message(filters.command("start") & filters.private)
