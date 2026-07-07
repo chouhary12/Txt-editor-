@@ -8,7 +8,7 @@ from pyrogram.types import (
 )
 from pyrogram import filters
 
-from bot import app
+from app import app
 from handlers.upload import USER_FILES
 
 
