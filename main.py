@@ -171,12 +171,27 @@ async def document_handler(client, message):
                 state["old_lines"] = lines
                 await status.edit_text("✅ OLD file received. Now send **NEW TXT**.")
                 return
-            old = urls(state["old_lines"])
-            new = urls(lines)
-            result = [u for u in new if u not in set(old)]
+
+            # Compare by URL, but preserve the complete original NEW line
+            # (lecture/name + URL) in the output.
+            old_url_set = set(urls(state["old_lines"]))
+            result = []
+            seen_new = set()
+            for line in lines:
+                found = list(URL_RE.finditer(line))
+                if not found:
+                    continue
+                link = found[0].group(0).strip().rstrip(".,;:!?)]}>\"'")
+                if link not in old_url_set and link not in seen_new:
+                    result.append(line)
+                    seen_new.add(link)
+
             out = tmp / "new_links.txt"
             out.write_text("\n".join(result) + ("\n" if result else ""), encoding="utf-8")
-            await message.reply_document(str(out), caption=f"✅ New unique links: {len(result)}")
+            await message.reply_document(
+                str(out),
+                caption=f"✅ New unique links: {len(result)}\n📝 Name + link preserved"
+            )
 
         elif action == "extract":
             result = urls(lines)
