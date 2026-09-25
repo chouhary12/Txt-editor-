@@ -167,11 +167,11 @@ async def document_handler(client, message):
         action = state["action"]
 
         if action == "compare":
-            state["files"].append(str(path))
-            if len(state["files"]) == 1:
+            if not state.get("old_lines"):
+                state["old_lines"] = lines
                 await status.edit_text("✅ OLD file received. Now send **NEW TXT**.")
                 return
-            old = urls(read_lines(state["files"][0]))
+            old = urls(state["old_lines"])
             new = urls(lines)
             result = [u for u in new if u not in set(old)]
             out = tmp / "new_links.txt"
@@ -207,13 +207,11 @@ async def document_handler(client, message):
             return
 
         elif action == "merge":
-            state["files"].append(str(path))
-            if len(state["files"]) == 1:
+            if not state.get("first_lines"):
+                state["first_lines"] = lines
                 await status.edit_text("✅ First file received. Now send **second TXT**.")
                 return
-            merged = []
-            for p in state["files"]:
-                merged.extend(read_lines(p))
+            merged = list(state["first_lines"]) + list(lines)
             out = tmp / "merged.txt"
             out.write_text("\n".join(merged) + ("\n" if merged else ""), encoding="utf-8")
             await message.reply_document(str(out), caption=f"🔀 Merged lines: {len(merged)}")
@@ -233,7 +231,7 @@ async def document_handler(client, message):
 
     except Exception as e:
         states.pop(message.from_user.id, None)
-        await status.edit_text(f"❌ Error: `{type(e).__name__}`")
+        await status.edit_text(f"❌ Error: `{type(e).__name__}`\n`{str(e)[:500]}`")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
