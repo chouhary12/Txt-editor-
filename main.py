@@ -239,6 +239,4 @@ async def document_handler(client, message):
 
 if __name__ == "__main__":
     print("TXT Tools Bot starting...")
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     app.run()
