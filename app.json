@@ -1,0 +1,35 @@
+{
+  "name": "telegram-txt-tools-bot",
+  "description": "Telegram bot for comparing TXT files, extracting new links, cleaning, merging and TXT statistics.",
+  "keywords": ["telegram", "pyrogram", "txt", "url", "heroku"],
+  "repository": "",
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID from my.telegram.org",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API hash from my.telegram.org",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Telegram bot token from BotFather",
+      "required": true
+    },
+    "FORCE_SUB_CHANNEL": {
+      "description": "Channel username or chat ID used for force subscription",
+      "value": "@inventor_king_24",
+      "required": true
+    },
+    "FORCE_SUB_URL": {
+      "description": "Public invite/channel URL shown to users",
+      "value": "https://t.me/inventor_king_24",
+      "required": true
+    },
+    "MAX_FILE_MB": {
+      "description": "Maximum TXT file size in MB",
+      "value": "20",
+      "required": true
+    }
+  }
+}
