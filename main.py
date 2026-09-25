@@ -334,5 +334,14 @@ async def text_fallback(client, message):
     await message.reply_text("ℹ️ TXT file upload karo ya /start se option choose karo.")
 
 if __name__ == "__main__":
+    # Pyrogram's synchronous app.run() relies on the legacy
+    # asyncio.get_event_loop() behavior, which raises on Python 3.14.
+    # Use an explicit event loop instead.
     print("TXT Tools Bot starting...")
-    app.run()
+    asyncio.run(app.start())
+    try:
+        asyncio.get_event_loop().run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        asyncio.run(app.stop())
