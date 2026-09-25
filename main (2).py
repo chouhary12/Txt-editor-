@@ -1,0 +1,244 @@
+import asyncio
+import os
+import re
+import shutil
+import tempfile
+from pathlib import Path
+
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+from pyrogram.errors import UserNotParticipant, ChatAdminRequired
+
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "@inventor_king_24")
+FORCE_SUB_URL = os.getenv("FORCE_SUB_URL", "https://t.me/inventor_king_24")
+MAX_FILE_MB = int(os.getenv("MAX_FILE_MB", "20"))
+MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
+
+app = Client("txt_tools_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+states = {}
+URL_RE = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\[\]{}\"']+")
+
+def unique(items):
+    seen, out = set(), []
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+def urls(lines):
+    return unique(m.group(0).strip().rstrip(".,;:!?)]}>\"'") for line in lines for m in URL_RE.finditer(line))
+
+def read_lines(path):
+    data = Path(path).read_bytes()
+    for enc in ("utf-8", "utf-8-sig", "utf-16", "latin-1"):
+        try:
+            return data.decode(enc).splitlines()
+        except UnicodeDecodeError:
+            pass
+    return data.decode("utf-8", errors="ignore").splitlines()
+
+async def subscribed(client, user_id):
+    try:
+        member = await client.get_chat_member(FORCE_SUB_CHANNEL, user_id)
+        return getattr(member, "status", "") not in ("left", "kicked", "banned")
+    except (UserNotParticipant, ChatAdminRequired):
+        return False
+    except Exception:
+        return False
+
+def sub_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Channel", url=FORCE_SUB_URL)],
+        [InlineKeyboardButton("🔄 Check Subscription", callback_data="checksub")]
+    ])
+
+async def need_sub(client, message):
+    if await subscribed(client, message.from_user.id):
+        return True
+    await message.reply_text(
+        "🔒 **Please join our channel first.**\n\nAfter joining, tap **Check Subscription**.",
+        reply_markup=sub_markup()
+    )
+    return False
+
+def menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔎 New Links", callback_data="compare"),
+         InlineKeyboardButton("🔗 Extract URLs", callback_data="extract")],
+        [InlineKeyboardButton("🧹 Clean TXT", callback_data="clean"),
+         InlineKeyboardButton("📊 TXT Stats", callback_data="stats")],
+        [InlineKeyboardButton("🔀 Merge TXT", callback_data="merge"),
+         InlineKeyboardButton("♻️ Duplicates", callback_data="duplicates")]
+    ])
+
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    if not await need_sub(client, message): return
+    await message.reply_text(
+        "👋 **TXT Tools Bot**\n\nChoose a TXT tool:",
+        reply_markup=menu()
+    )
+
+@app.on_message(filters.command("help"))
+async def help_cmd(client, message):
+    if not await need_sub(client, message): return
+    await message.reply_text(
+        "/compare - OLD vs NEW, return new URLs\n"
+        "/extract - extract URLs\n"
+        "/clean - remove blank/duplicate lines\n"
+        "/stats - TXT statistics\n"
+        "/merge - merge two TXT files\n"
+        "/duplicates - find duplicate lines\n\n"
+        f"Max file size: {MAX_FILE_MB} MB"
+    )
+
+async def begin(client, message, action):
+    if not await need_sub(client, message): return
+    states[message.from_user.id] = {"action": action, "files": []}
+    prompts = {
+        "compare": "📁 Send **OLD TXT** first.",
+        "extract": "📁 Send TXT file.",
+        "clean": "📁 Send TXT file.",
+        "stats": "📁 Send TXT file.",
+        "merge": "📁 Send the **first TXT** file.",
+        "duplicates": "📁 Send TXT file."
+    }
+    await message.reply_text(prompts[action])
+
+for command, action in [
+    ("compare", "compare"), ("extract", "extract"), ("clean", "clean"),
+    ("stats", "stats"), ("merge", "merge"), ("duplicates", "duplicates")
+]:
+    @app.on_message(filters.command(command))
+    async def command_handler(client, message, _action=action):
+        await begin(client, message, _action)
+
+@app.on_callback_query(filters.regex("^checksub$"))
+async def checksub(client, callback):
+    if await subscribed(client, callback.from_user.id):
+        await callback.message.edit_text("✅ Subscription verified!\n\nUse /start")
+    else:
+        await callback.answer("❌ Join the channel first.", show_alert=True)
+
+@app.on_callback_query(filters.regex("^(compare|extract|clean|stats|merge|duplicates)$"))
+async def menu_callback(client, callback):
+    if not await subscribed(client, callback.from_user.id):
+        await callback.message.edit_text("🔒 Join the channel first.", reply_markup=sub_markup())
+        return
+    action = callback.data
+    states[callback.from_user.id] = {"action": action, "files": []}
+    await callback.message.edit_text({
+        "compare": "📁 Send **OLD TXT** first.",
+        "extract": "📁 Send TXT file.",
+        "clean": "📁 Send TXT file.",
+        "stats": "📁 Send TXT file.",
+        "merge": "📁 Send the **first TXT** file.",
+        "duplicates": "📁 Send TXT file."
+    }[action])
+
+@app.on_message(filters.document)
+async def document_handler(client, message):
+    if not await need_sub(client, message): return
+    state = states.get(message.from_user.id)
+    if not state:
+        await message.reply_text("ℹ️ Use /start first.")
+        return
+
+    doc = message.document
+    name = doc.file_name or "file.txt"
+    if not name.lower().endswith(".txt"):
+        await message.reply_text("❌ Only .txt files are allowed.")
+        return
+    if (doc.file_size or 0) > MAX_FILE_BYTES:
+        await message.reply_text(f"❌ Maximum file size is {MAX_FILE_MB} MB.")
+        return
+
+    status = await message.reply_text("⏳ Processing...")
+    tmp = Path(tempfile.mkdtemp(prefix="txtbot_"))
+    path = tmp / name
+
+    try:
+        await message.download(file_name=str(path))
+        lines = read_lines(path)
+        action = state["action"]
+
+        if action == "compare":
+            state["files"].append(str(path))
+            if len(state["files"]) == 1:
+                await status.edit_text("✅ OLD file received. Now send **NEW TXT**.")
+                return
+            old = urls(read_lines(state["files"][0]))
+            new = urls(lines)
+            result = [u for u in new if u not in set(old)]
+            out = tmp / "new_links.txt"
+            out.write_text("\n".join(result) + ("\n" if result else ""), encoding="utf-8")
+            await message.reply_document(str(out), caption=f"✅ New unique links: {len(result)}")
+
+        elif action == "extract":
+            result = urls(lines)
+            out = tmp / "extracted_urls.txt"
+            out.write_text("\n".join(result) + ("\n" if result else ""), encoding="utf-8")
+            await message.reply_document(str(out), caption=f"🔗 URLs: {len(result)}")
+
+        elif action == "clean":
+            result = unique(x.strip() for x in lines if x.strip())
+            out = tmp / "cleaned.txt"
+            out.write_text("\n".join(result) + ("\n" if result else ""), encoding="utf-8")
+            await message.reply_document(str(out), caption=f"🧹 Clean lines: {len(result)}")
+
+        elif action == "stats":
+            nonempty = [x.strip() for x in lines if x.strip()]
+            uniq = len(set(nonempty))
+            await status.edit_text(
+                "📊 **TXT Stats**\n\n"
+                f"Total lines: `{len(lines)}`\n"
+                f"Non-empty: `{len(nonempty)}`\n"
+                f"Unique lines: `{uniq}`\n"
+                f"Duplicate lines: `{len(nonempty)-uniq}`\n"
+                f"Unique URLs: `{len(urls(lines))}`\n"
+                f"Words: `{sum(len(x.split()) for x in lines)}`\n"
+                f"Characters: `{sum(len(x) for x in lines)}`"
+            )
+            states.pop(message.from_user.id, None)
+            return
+
+        elif action == "merge":
+            state["files"].append(str(path))
+            if len(state["files"]) == 1:
+                await status.edit_text("✅ First file received. Now send **second TXT**.")
+                return
+            merged = []
+            for p in state["files"]:
+                merged.extend(read_lines(p))
+            out = tmp / "merged.txt"
+            out.write_text("\n".join(merged) + ("\n" if merged else ""), encoding="utf-8")
+            await message.reply_document(str(out), caption=f"🔀 Merged lines: {len(merged)}")
+
+        elif action == "duplicates":
+            counts = {}
+            for line in lines:
+                v = line.strip()
+                if v: counts[v] = counts.get(v, 0) + 1
+            result = unique(v for v in (x.strip() for x in lines) if v and counts[v] > 1)
+            out = tmp / "duplicates.txt"
+            out.write_text("\n".join(result) + ("\n" if result else ""), encoding="utf-8")
+            await message.reply_document(str(out), caption=f"♻️ Duplicate unique lines: {len(result)}")
+
+        states.pop(message.from_user.id, None)
+        await status.delete()
+
+    except Exception as e:
+        states.pop(message.from_user.id, None)
+        await status.edit_text(f"❌ Error: `{type(e).__name__}`")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+if __name__ == "__main__":
+    print("TXT Tools Bot starting...")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    app.run()
