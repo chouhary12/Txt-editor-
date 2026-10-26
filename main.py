@@ -8,6 +8,8 @@ from pathlib import Path
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from pyrogram.errors import UserNotParticipant, ChatAdminRequired
+from flask import Flask, jsonify
+import threading
 
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
@@ -18,6 +20,22 @@ MAX_FILE_MB = int(os.getenv("MAX_FILE_MB", "20"))
 MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
 
 app = Client("txt_tools_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# Koyeb Web Services expect an HTTP response on the assigned PORT.
+# This lightweight health server runs alongside the Telegram polling bot.
+health_app = Flask("txt_tools_health")
+
+@health_app.get("/")
+def health_root():
+    return jsonify({"status": "ok", "service": "TXT Tools Telegram Bot"}), 200
+
+@health_app.get("/health")
+def health_check():
+    return jsonify({"status": "healthy"}), 200
+
+def run_health_server():
+    port = int(os.getenv("PORT", "8000"))
+    health_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 states = {}
 URL_RE = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\[\]{}\"']+")
 
@@ -321,5 +339,6 @@ async def document_handler(client, message):
         shutil.rmtree(tmp, ignore_errors=True)
 
 if __name__ == "__main__":
-    print("TXT Tools Bot starting...")
+    print("TXT Tools Bot starting...", flush=True)
+    threading.Thread(target=run_health_server, daemon=True, name="health-server").start()
     app.run()
